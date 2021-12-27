@@ -32,7 +32,7 @@ func getBalanceHandler(context echo.Context) error {
 		return context.JSON(http.StatusBadRequest, newResponse(nil, errInvalidParameters))
 	}
 
-	balanceStruct, err := balance.GetBalance(request.Id)
+	balanceStruct, err := balance.GetBalanceTransaction(request.Id)
 
 	switch err {
 	case nil:
@@ -58,7 +58,7 @@ func changeBalanceHandler(context echo.Context) error {
 		return context.JSON(http.StatusBadRequest, newResponse(nil, errInvalidParameters))
 	}
 
-	balanceStruct, err := balance.ChangeBalance(request.Id, request.Amount)
+	balanceStruct, err := balance.ChangeBalanceTransaction(request.Id, request.Amount)
 
 	switch err {
 	case nil:

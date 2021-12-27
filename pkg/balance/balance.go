@@ -38,9 +38,10 @@ var (
 	ErrBalanceOverflow            = fmt.Errorf("balance overflow")
 )
 
-//helper function, id mist be >= 0
-func GetBalance(id int64) (*Balance, error) {
-	secondaryBalance, err := database.GetUserBalance(id)
+//Helper function for accessing database. Since other functions such as update balance need to
+//access database for actual values but do not want to start new transaction, there is this function
+func getBalance(id int64, forUpdate bool) (*Balance, error) {
+	secondaryBalance, err := database.GetUserBalance(id, forUpdate)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, ErrUserNotFound
@@ -58,10 +59,28 @@ func GetBalance(id int64) (*Balance, error) {
 	return balance, nil
 }
 
+//helper function, id mist be >= 0
+func GetBalanceTransaction(id int64) (*Balance, error) {
+	err := database.BeginTransaction()
+	if err != nil {
+		return nil, ErrAccessDatabase
+	}
+	defer database.CommitTransaction()
+
+	balance, err := getBalance(id, false)
+	return balance, err
+}
+
 //helper function, id must be >= 0
-func ChangeBalance(id int64, amount int64) (*Balance, error) {
+func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 	//get user's balance to check if it is ok to complete operation
-	balanceStruct, err := GetBalance(id)
+	err := database.BeginTransaction()
+	if err != nil {
+		return nil, ErrAccessDatabase
+	}
+	defer database.CommitTransaction()
+
+	balanceStruct, err := getBalance(id, true)
 	if err != nil {
 		if err != ErrUserNotFound {
 			return nil, err
@@ -78,7 +97,7 @@ func ChangeBalance(id int64, amount int64) (*Balance, error) {
 			return nil, ErrAccessDatabase
 		}
 
-		balanceStruct, err = GetBalance(id)
+		balanceStruct, err = getBalance(id, true)
 		if err != nil {
 			return nil, err
 		}
@@ -108,7 +127,7 @@ func ChangeBalance(id int64, amount int64) (*Balance, error) {
 	}
 
 	//get record and return successfully
-	balanceStruct, err = GetBalance(id)
+	balanceStruct, err = getBalance(id, false)
 	if err != nil {
 		return nil, err
 	}

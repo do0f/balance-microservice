@@ -25,8 +25,25 @@ func Close() error {
 	return err
 }
 
-func GetUserBalance(id int64) (int64, error) {
-	row := db.QueryRow(fmt.Sprintf("SELECT balance FROM UserBalance WHERE id = %d", id))
+func BeginTransaction() error {
+	_, err := db.Exec("BEGIN")
+	return err
+}
+func CommitTransaction() error {
+	_, err := db.Exec("COMMIT")
+	return err
+}
+
+func GetUserBalance(id int64, forUpdate bool) (int64, error) {
+	var accessType string
+	if forUpdate {
+		accessType = "FOR UPDATE"
+	} else {
+		accessType = "FOR SHARE"
+	}
+
+	query := fmt.Sprintf("SELECT balance FROM UserBalance WHERE id = %d %s", id, accessType)
+	row := db.QueryRow(query)
 
 	var balance int64 = 0
 	err := row.Scan(&balance)
