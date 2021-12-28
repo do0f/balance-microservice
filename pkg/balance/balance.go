@@ -40,8 +40,8 @@ var (
 
 //Helper function for accessing database. Since other functions such as update balance need to
 //access database for actual values but do not want to start new transaction, there is this function
-func getBalance(id int64, forUpdate bool) (*Balance, error) {
-	secondaryBalance, err := database.GetUserBalance(id, forUpdate)
+func getBalance(tx *database.Transaction, id int64, forUpdate bool) (*Balance, error) {
+	secondaryBalance, err := database.GetUserBalance(tx, id, forUpdate)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, ErrUserNotFound
@@ -61,26 +61,38 @@ func getBalance(id int64, forUpdate bool) (*Balance, error) {
 
 //helper function, id mist be >= 0
 func GetBalanceTransaction(id int64) (*Balance, error) {
-	err := database.BeginTransaction()
+	tx, err := database.BeginTransaction()
 	if err != nil {
 		return nil, ErrAccessDatabase
 	}
-	defer database.CommitTransaction()
+	defer func() {
+		if err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+	}()
 
-	balance, err := getBalance(id, false)
+	balance, err := getBalance(tx, id, false)
 	return balance, err
 }
 
 //helper function, id must be >= 0
 func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
-	//get user's balance to check if it is ok to complete operation
-	err := database.BeginTransaction()
+	tx, err := database.BeginTransaction()
 	if err != nil {
 		return nil, ErrAccessDatabase
 	}
-	defer database.CommitTransaction()
+	defer func() {
+		if err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+	}()
 
-	balanceStruct, err := getBalance(id, true)
+	balanceStruct, err := getBalance(tx, id, true)
+
 	if err != nil {
 		if err != ErrUserNotFound {
 			return nil, err
@@ -92,12 +104,12 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 		}
 
 		//new account is created with first money crediting
-		err = database.CreateUser(id)
+		err = database.CreateUser(tx, id)
 		if err != nil {
 			return nil, ErrAccessDatabase
 		}
 
-		balanceStruct, err = getBalance(id, true)
+		balanceStruct, err = getBalance(tx, id, true)
 		if err != nil {
 			return nil, err
 		}
@@ -120,14 +132,14 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 	}
 
 	if amount != 0 {
-		err = database.ChangeUserBalance(id, amount)
+		err = database.ChangeUserBalance(tx, id, amount)
 		if err != nil {
 			return nil, ErrAccessDatabase
 		}
 	}
 
 	//get record and return successfully
-	balanceStruct, err = getBalance(id, false)
+	balanceStruct, err = getBalance(tx, id, false)
 	if err != nil {
 		return nil, err
 	}
