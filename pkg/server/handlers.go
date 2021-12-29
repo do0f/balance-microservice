@@ -7,7 +7,7 @@ import (
 	echo "github.com/labstack/echo/v4"
 )
 
-//GET balance/users/<user id>
+//GET balance/users/<user id>?currency=<currency name>
 //returns error and balance struct in JSON
 func getBalanceHandler(context echo.Context) error {
 	request := &getData{}
@@ -31,6 +31,34 @@ func getBalanceHandler(context echo.Context) error {
 
 	case balance.ErrConvertCurrency:
 		return context.JSON(http.StatusBadRequest, newResponse(nil, err))
+
+	case balance.ErrAccessDatabase:
+		fallthrough
+	case balance.ErrNegativeBalance:
+		fallthrough
+	default:
+		return context.JSON(http.StatusInternalServerError, newResponse(nil, err))
+	}
+
+}
+
+//GET balance/users/<user id>/history
+//returns error and user's transfers in JSON
+func getHistoryHandler(context echo.Context) error {
+	request := &getData{}
+	err := context.Bind(request)
+	if err != nil || request.Id < 0 {
+		return context.JSON(http.StatusBadRequest, newResponse(nil, errInvalidParameters))
+	}
+
+	transfers, err := balance.GetHistoryTransaction(request.Id)
+
+	switch err {
+	case nil:
+		return context.JSON(http.StatusOK, newResponse(transfers, err))
+
+	case balance.ErrUserNotFound:
+		return context.JSON(http.StatusNotFound, newResponse(nil, err))
 
 	case balance.ErrAccessDatabase:
 		fallthrough

@@ -23,8 +23,8 @@ func getBalance(tx *database.Transaction, id int64, currency string, forUpdate b
 	}
 
 	//convert value stored in database to needed currency
-	if currency != "RUB" {
-		url := fmt.Sprintf("https://free.currconv.com/api/v7/convert?q=RUB_%s&compact=ultra&apiKey=%s", currency, exchangeApiKey)
+	if currency != defaultCurrency {
+		url := fmt.Sprintf("https://free.currconv.com/api/v7/convert?q=%s_%s&compact=ultra&apiKey=%s", defaultCurrency, currency, exchangeApiKey)
 		response, err := http.Get(url)
 		if err != nil || response.StatusCode != http.StatusOK {
 			return nil, ErrConvertCurrency
@@ -34,9 +34,8 @@ func getBalance(tx *database.Transaction, id int64, currency string, forUpdate b
 		if err != nil {
 			return nil, ErrConvertCurrency
 		}
-		json := string(jsonBytes)
 
-		exchangeRateValue := gjson.Get(json, fmt.Sprintf("RUB_%s", currency))
+		exchangeRateValue := gjson.Get(string(jsonBytes), fmt.Sprintf("%s_%s", defaultCurrency, currency))
 		exchangeRate := exchangeRateValue.Float()
 
 		if exchangeRate > 1.0 && int64(float64(math.MaxInt64)/exchangeRate) < secondaryBalance {
@@ -48,7 +47,7 @@ func getBalance(tx *database.Transaction, id int64, currency string, forUpdate b
 
 	balance, err := newBalance(secondaryBalance, currency)
 	if err != nil {
-		return nil, ErrNegativeBalance
+		return nil, err
 	}
 
 	return balance, nil
@@ -74,6 +73,46 @@ func GetBalanceTransaction(id int64, currency string) (*Balance, error) {
 }
 
 //params must be validated:
+//id mist be >= 0
+func GetHistoryTransaction(id int64) ([]*Transfer, error) {
+	tx, err := database.BeginTransaction()
+	if err != nil {
+		return nil, ErrAccessDatabase
+	}
+	defer func() {
+		if err == nil {
+			tx.Commit()
+		} else {
+			tx.Rollback()
+		}
+	}()
+
+	exists, err := database.UserExists(tx, id)
+	if err != nil {
+		return nil, ErrAccessDatabase
+	}
+	if !exists {
+		return nil, ErrUserNotFound
+	}
+
+	transfers := make([]*Transfer, 0)
+	dbTransfers, err := database.GetUserHistory(tx, id)
+	if err != nil {
+		return nil, ErrAccessDatabase
+	}
+
+	for _, dbTransfer := range dbTransfers {
+		transfer, err := newTransfer(dbTransfer.Amount, dbTransfer.TransferredAt, dbTransfer.Purpose)
+		if err != nil {
+			return nil, err
+		}
+
+		transfers = append(transfers, transfer)
+	}
+	return transfers, nil
+}
+
+//params must be validated:
 //id must be >= 0
 func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 	tx, err := database.BeginTransaction()
@@ -88,7 +127,7 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 		}
 	}()
 
-	balanceStruct, err := getBalance(tx, id, "RUB", true)
+	balanceStruct, err := getBalance(tx, id, defaultCurrency, true)
 
 	if err != nil {
 		if err != ErrUserNotFound {
@@ -106,7 +145,7 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 			return nil, ErrAccessDatabase
 		}
 
-		balanceStruct, err = getBalance(tx, id, "RUB", true)
+		balanceStruct, err = getBalance(tx, id, defaultCurrency, true)
 		if err != nil {
 			return nil, err
 		}
@@ -133,10 +172,15 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 		if err != nil {
 			return nil, ErrAccessDatabase
 		}
+
+		err = database.UpdateHistory(tx, id, amount, "External service operation")
+		if err != nil {
+			return nil, ErrAccessDatabase
+		}
 	}
 
 	//get record and return successfully
-	balanceStruct, err = getBalance(tx, id, "RUB", false)
+	balanceStruct, err = getBalance(tx, id, defaultCurrency, false)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +203,7 @@ func TransferTransaction(senderId int64, recipientId int64, amount int64) (*Bala
 		}
 	}()
 
-	senderBalanceStruct, err := getBalance(tx, senderId, "RUB", true)
+	senderBalanceStruct, err := getBalance(tx, senderId, defaultCurrency, true)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +215,7 @@ func TransferTransaction(senderId int64, recipientId int64, amount int64) (*Bala
 		return nil, ErrNotEnoughMoney
 	}
 
-	recipientBalanceStruct, err := getBalance(tx, recipientId, "RUB", true)
+	recipientBalanceStruct, err := getBalance(tx, recipientId, defaultCurrency, true)
 	if err != nil {
 		//new account is not created, user cannot transfer money to
 		//non-existing person
@@ -189,12 +233,21 @@ func TransferTransaction(senderId int64, recipientId int64, amount int64) (*Bala
 	if err != nil {
 		return nil, err
 	}
+	err = database.UpdateHistory(tx, senderId, amount*-1, fmt.Sprintf("Transferred to %d", recipientId))
+	if err != nil {
+		return nil, ErrAccessDatabase
+	}
+
 	err = database.ChangeUserBalance(tx, recipientId, amount)
 	if err != nil {
 		return nil, err
 	}
+	err = database.UpdateHistory(tx, recipientId, amount, fmt.Sprintf("Transferred from %d", senderId))
+	if err != nil {
+		return nil, ErrAccessDatabase
+	}
 
-	senderBalanceStruct, err = getBalance(tx, senderId, "RUB", false)
+	senderBalanceStruct, err = getBalance(tx, senderId, defaultCurrency, false)
 	if err != nil {
 		return nil, err
 	}

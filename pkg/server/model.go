@@ -1,7 +1,6 @@
 package server
 
 import (
-	"balance_microservice/balance"
 	"fmt"
 )
 
@@ -10,8 +9,8 @@ var (
 )
 
 type response struct {
-	Err    *string          `json:"error"`
-	Record *balance.Balance `json:"balance"`
+	Err    *string     `json:"error"`
+	Record interface{} `json:"data"`
 }
 type getData struct {
 	Id       int64  `param:"id"`
@@ -27,7 +26,7 @@ type transferData struct {
 	Amount      int64 `json:"amount"`
 }
 
-func newResponse(record *balance.Balance, err error) *response {
+func newResponse(record interface{}, err error) *response {
 	if err == nil {
 		return &response{nil, record}
 	}

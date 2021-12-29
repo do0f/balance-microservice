@@ -3,6 +3,7 @@ package balance
 import (
 	"errors"
 	"math"
+	"time"
 )
 
 var (
@@ -16,7 +17,8 @@ var (
 )
 
 const (
-	exchangeApiKey = "9cfd3862d7643187e74d"
+	defaultCurrency = "RUB"
+	exchangeApiKey  = "9cfd3862d7643187e74d"
 )
 
 type Balance struct {
@@ -25,12 +27,23 @@ type Balance struct {
 	Currency       string `json:"currency"`
 }
 
+type Transfer struct {
+	PrimaryValue   int64     `json:"primary value"`
+	SecondaryValue int8      `json:"secondary value"`
+	TransferredAt  time.Time `json:"transferred at"`
+	Purpose        string    `json:"purpose"`
+}
+
 func newBalance(secondary int64, currency string) (*Balance, error) {
 	if secondary < 0 {
 		return nil, ErrNegativeBalance
 	}
 
 	return &Balance{secondary / 100, int8(secondary % 100), currency}, nil
+}
+
+func newTransfer(secondary int64, transferredAt time.Time, purpose string) (*Transfer, error) {
+	return &Transfer{secondary / 100, int8(secondary % 100), transferredAt, purpose}, nil
 }
 
 func (balance *Balance) ConvertToSecondary() (int64, error) {
