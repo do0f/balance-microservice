@@ -1,17 +1,22 @@
 package balance
 
 import (
-	"fmt"
+	"errors"
 	"math"
 )
 
 var (
-	ErrAccessDatabase             = fmt.Errorf("error while accessing database")
-	ErrUserNotFound               = fmt.Errorf("user with such id doesn't exist")
-	ErrNegativeBalance            = fmt.Errorf("negative balance value")
-	ErrNotEnoughMoney             = fmt.Errorf("trying to withdraw more money than account has")
-	ErrCreatingWithNegativeAmount = fmt.Errorf("trying to withdraw money from non-existing account")
-	ErrBalanceOverflow            = fmt.Errorf("balance overflow")
+	ErrAccessDatabase             = errors.New("error while accessing database")
+	ErrUserNotFound               = errors.New("user with such id doesn't exist")
+	ErrNegativeBalance            = errors.New("negative balance value")
+	ErrNotEnoughMoney             = errors.New("trying to withdraw more money than account has")
+	ErrCreatingWithNegativeAmount = errors.New("trying to withdraw money from non-existing account")
+	ErrBalanceOverflow            = errors.New("balance overflow")
+	ErrConvertCurrency            = errors.New("error converting to currency")
+)
+
+const (
+	exchangeApiKey = "9cfd3862d7643187e74d"
 )
 
 type Balance struct {

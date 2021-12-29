@@ -2,12 +2,17 @@ package balance
 
 import (
 	"balance_microservice/database"
+	"fmt"
+	"io"
 	"math"
+	"net/http"
+
+	"github.com/tidwall/gjson"
 )
 
 //Helper function for accessing database. Since other functions such as update balance need to
 //access database for actual values but do not want to start new transaction, there is this function
-func getBalance(tx *database.Transaction, id int64, forUpdate bool) (*Balance, error) {
+func getBalance(tx *database.Transaction, id int64, currency string, forUpdate bool) (*Balance, error) {
 	secondaryBalance, err := database.GetUserBalance(tx, id, forUpdate)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
@@ -17,8 +22,31 @@ func getBalance(tx *database.Transaction, id int64, forUpdate bool) (*Balance, e
 		return nil, ErrAccessDatabase
 	}
 
-	//RUB is default currency
-	balance, err := newBalance(secondaryBalance, "RUB")
+	//convert value stored in database to needed currency
+	if currency != "RUB" {
+		url := fmt.Sprintf("https://free.currconv.com/api/v7/convert?q=RUB_%s&compact=ultra&apiKey=%s", currency, exchangeApiKey)
+		response, err := http.Get(url)
+		if err != nil || response.StatusCode != http.StatusOK {
+			return nil, ErrConvertCurrency
+		}
+
+		jsonBytes, err := io.ReadAll(response.Body)
+		if err != nil {
+			return nil, ErrConvertCurrency
+		}
+		json := string(jsonBytes)
+
+		exchangeRateValue := gjson.Get(json, fmt.Sprintf("RUB_%s", currency))
+		exchangeRate := exchangeRateValue.Float()
+
+		if exchangeRate > 1.0 && int64(float64(math.MaxInt64)/exchangeRate) < secondaryBalance {
+			return nil, ErrBalanceOverflow
+		}
+
+		secondaryBalance = int64(float64(secondaryBalance) * exchangeRate)
+	}
+
+	balance, err := newBalance(secondaryBalance, currency)
 	if err != nil {
 		return nil, ErrNegativeBalance
 	}
@@ -28,7 +56,7 @@ func getBalance(tx *database.Transaction, id int64, forUpdate bool) (*Balance, e
 
 //params must be validated:
 //id mist be >= 0
-func GetBalanceTransaction(id int64) (*Balance, error) {
+func GetBalanceTransaction(id int64, currency string) (*Balance, error) {
 	tx, err := database.BeginTransaction()
 	if err != nil {
 		return nil, ErrAccessDatabase
@@ -41,7 +69,7 @@ func GetBalanceTransaction(id int64) (*Balance, error) {
 		}
 	}()
 
-	balance, err := getBalance(tx, id, false)
+	balance, err := getBalance(tx, id, currency, false)
 	return balance, err
 }
 
@@ -60,7 +88,7 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 		}
 	}()
 
-	balanceStruct, err := getBalance(tx, id, true)
+	balanceStruct, err := getBalance(tx, id, "RUB", true)
 
 	if err != nil {
 		if err != ErrUserNotFound {
@@ -78,7 +106,7 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 			return nil, ErrAccessDatabase
 		}
 
-		balanceStruct, err = getBalance(tx, id, true)
+		balanceStruct, err = getBalance(tx, id, "RUB", true)
 		if err != nil {
 			return nil, err
 		}
@@ -108,7 +136,7 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 	}
 
 	//get record and return successfully
-	balanceStruct, err = getBalance(tx, id, false)
+	balanceStruct, err = getBalance(tx, id, "RUB", false)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +159,7 @@ func TransferTransaction(senderId int64, recipientId int64, amount int64) (*Bala
 		}
 	}()
 
-	senderBalanceStruct, err := getBalance(tx, senderId, true)
+	senderBalanceStruct, err := getBalance(tx, senderId, "RUB", true)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +171,7 @@ func TransferTransaction(senderId int64, recipientId int64, amount int64) (*Bala
 		return nil, ErrNotEnoughMoney
 	}
 
-	recipientBalanceStruct, err := getBalance(tx, recipientId, true)
+	recipientBalanceStruct, err := getBalance(tx, recipientId, "RUB", true)
 	if err != nil {
 		//new account is not created, user cannot transfer money to
 		//non-existing person
@@ -166,7 +194,7 @@ func TransferTransaction(senderId int64, recipientId int64, amount int64) (*Bala
 		return nil, err
 	}
 
-	senderBalanceStruct, err = getBalance(tx, senderId, false)
+	senderBalanceStruct, err = getBalance(tx, senderId, "RUB", false)
 	if err != nil {
 		return nil, err
 	}

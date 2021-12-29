@@ -16,13 +16,22 @@ func getBalanceHandler(context echo.Context) error {
 		return context.JSON(http.StatusBadRequest, newResponse(nil, errInvalidParameters))
 	}
 
-	balanceStruct, err := balance.GetBalanceTransaction(request.Id)
+	if request.Currency == "" {
+		request.Currency = "RUB"
+	}
+
+	balanceStruct, err := balance.GetBalanceTransaction(request.Id, request.Currency)
 
 	switch err {
 	case nil:
 		return context.JSON(http.StatusOK, newResponse(balanceStruct, err))
+
 	case balance.ErrUserNotFound:
 		return context.JSON(http.StatusNotFound, newResponse(nil, err))
+
+	case balance.ErrConvertCurrency:
+		return context.JSON(http.StatusBadRequest, newResponse(nil, err))
+
 	case balance.ErrAccessDatabase:
 		fallthrough
 	case balance.ErrNegativeBalance:

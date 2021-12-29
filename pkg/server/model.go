@@ -14,7 +14,8 @@ type response struct {
 	Record *balance.Balance `json:"balance"`
 }
 type getData struct {
-	Id int64 `param:"id"`
+	Id       int64  `param:"id"`
+	Currency string `query:"currency"`
 }
 type changeData struct {
 	Id     int64 `param:"id"`
