@@ -1,7 +1,7 @@
 package server
 
 import (
-	"balance_microservice/balance"
+	"balance/pkg/service"
 	"net/http"
 
 	echo "github.com/labstack/echo/v4"
@@ -9,127 +9,116 @@ import (
 
 //GET balance/users/<user id>?currency=<currency name>
 //returns error and balance struct in JSON
-func getBalanceHandler(context echo.Context) error {
+func (h BalanceHandler) getBalance(ctx echo.Context) error {
 	request := &getData{}
-	err := context.Bind(request)
+	err := ctx.Bind(request)
 	if err != nil || request.Id < 0 {
-		return context.JSON(http.StatusBadRequest, newResponse(nil, errInvalidParameters))
+		return ctx.JSON(http.StatusBadRequest, errorResponse{errInvalidParameters.Error()})
 	}
 
 	if request.Currency == "" {
 		request.Currency = "RUB"
 	}
 
-	balanceStruct, err := balance.GetBalanceTransaction(request.Id, request.Currency)
-
-	switch err {
-	case nil:
-		return context.JSON(http.StatusOK, newResponse(balanceStruct, err))
-
-	case balance.ErrUserNotFound:
-		return context.JSON(http.StatusNotFound, newResponse(nil, err))
-
-	case balance.ErrConvertCurrency:
-		return context.JSON(http.StatusBadRequest, newResponse(nil, err))
-
-	case balance.ErrAccessDatabase:
-		fallthrough
-	case balance.ErrNegativeBalance:
-		fallthrough
-	default:
-		return context.JSON(http.StatusInternalServerError, newResponse(nil, err))
+	balanceStruct, err := h.service.GetBalance(request.Id, request.Currency)
+	if err == nil {
+		return ctx.JSON(http.StatusOK, balanceStruct)
 	}
 
+	var code int
+	switch err {
+	case service.ErrUserNotFound:
+		code = http.StatusNotFound
+	case service.ErrConvertCurrency:
+		code = http.StatusBadRequest
+
+	default:
+		code = http.StatusInternalServerError
+	}
+	return ctx.JSON(code, errorResponse{err.Error()})
 }
 
 //GET balance/users/<user id>/history
 //returns error and user's transfers in JSON
-func getHistoryHandler(context echo.Context) error {
+func (h BalanceHandler) getHistory(ctx echo.Context) error {
 	request := &getData{}
-	err := context.Bind(request)
+	err := ctx.Bind(request)
 	if err != nil || request.Id < 0 {
-		return context.JSON(http.StatusBadRequest, newResponse(nil, errInvalidParameters))
+		return ctx.JSON(http.StatusBadRequest, errorResponse{errInvalidParameters.Error()})
 	}
 
-	transfers, err := balance.GetHistoryTransaction(request.Id)
+	transfers, err := h.service.GetHistory(request.Id)
 
+	if err == nil {
+		return ctx.JSON(http.StatusOK, transfers)
+	}
+
+	var code int
 	switch err {
-	case nil:
-		return context.JSON(http.StatusOK, newResponse(transfers, err))
+	case service.ErrUserNotFound:
+		code = http.StatusNotFound
 
-	case balance.ErrUserNotFound:
-		return context.JSON(http.StatusNotFound, newResponse(nil, err))
-
-	case balance.ErrAccessDatabase:
-		fallthrough
-	case balance.ErrNegativeBalance:
-		fallthrough
 	default:
-		return context.JSON(http.StatusInternalServerError, newResponse(nil, err))
+		code = http.StatusInternalServerError
 	}
-
+	return ctx.JSON(code, errorResponse{err.Error()})
 }
 
 //PUT balance/users/<user id>
 //JSON: amount: <amount of kopecks>
 //returns error and changed balance struct in JSON
-func changeBalanceHandler(context echo.Context) error {
+func (h BalanceHandler) changeBalance(ctx echo.Context) error {
 	request := &changeData{}
-	err := context.Bind(request)
+	err := ctx.Bind(request)
 	if err != nil || request.Id < 0 {
-		return context.JSON(http.StatusBadRequest, newResponse(nil, errInvalidParameters))
+		return ctx.JSON(http.StatusBadRequest, errorResponse{errInvalidParameters.Error()})
 	}
 
-	balanceStruct, err := balance.ChangeBalanceTransaction(request.Id, request.Amount)
+	balanceStruct, err := h.service.ChangeBalance(request.Id, request.Amount)
 
+	if err == nil {
+		return ctx.JSON(http.StatusOK, balanceStruct)
+	}
+
+	var code int
 	switch err {
-	case nil:
-		return context.JSON(http.StatusOK, newResponse(balanceStruct, nil))
+	case service.ErrNotEnoughMoney:
+		fallthrough
+	case service.ErrCreatingWithNegativeAmount:
+		code = http.StatusBadRequest
 
-	case balance.ErrNotEnoughMoney:
-		fallthrough
-	case balance.ErrCreatingWithNegativeAmount:
-		return context.JSON(http.StatusBadRequest, newResponse(nil, err))
-
-	case balance.ErrAccessDatabase:
-		fallthrough
-	case balance.ErrNegativeBalance:
-		fallthrough
-	case balance.ErrBalanceOverflow:
-		fallthrough
 	default:
-		return context.JSON(http.StatusInternalServerError, newResponse(nil, err))
+		code = http.StatusInternalServerError
 	}
+	return ctx.JSON(code, errorResponse{err.Error()})
 }
 
 //PUT balance/users/<user id>/transfer
 //JSON amount: <amount of kopeks> recipient: <recipient's id>
 //returns error and changed balance struct of sender in JSON
-func transferHandler(context echo.Context) error {
+func (h BalanceHandler) transfer(ctx echo.Context) error {
 	request := &transferData{}
-	err := context.Bind(request)
+	err := ctx.Bind(request)
 	//check for self-transfer, negative transfer and invalid ids
 	if err != nil || request.SenderId < 0 || request.RecipientId < 0 || request.SenderId == request.RecipientId || request.Amount <= 0 {
-		return context.JSON(http.StatusBadRequest, newResponse(nil, errInvalidParameters))
+		return ctx.JSON(http.StatusBadRequest, errorResponse{errInvalidParameters.Error()})
 	}
 
-	balanceStruct, err := balance.TransferTransaction(request.SenderId, request.RecipientId, request.Amount)
+	balanceStruct, err := h.service.Transfer(request.SenderId, request.RecipientId, request.Amount)
+
+	if err == nil {
+		return ctx.JSON(http.StatusOK, balanceStruct)
+	}
+
+	var code int
 	switch err {
-	case nil:
-		return context.JSON(http.StatusOK, newResponse(balanceStruct, nil))
+	case service.ErrNotEnoughMoney:
+		fallthrough
+	case service.ErrUserNotFound:
+		code = http.StatusBadRequest
 
-	case balance.ErrNotEnoughMoney:
-		fallthrough
-	case balance.ErrUserNotFound:
-		return context.JSON(http.StatusBadRequest, newResponse(nil, err))
-
-	case balance.ErrAccessDatabase:
-		fallthrough
-	case balance.ErrNegativeBalance:
-		fallthrough
-	case balance.ErrBalanceOverflow:
-		fallthrough
 	default:
-		return context.JSON(http.StatusInternalServerError, newResponse(nil, err))
+		code = http.StatusInternalServerError
 	}
+	return ctx.JSON(code, errorResponse{err.Error()})
 }

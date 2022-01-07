@@ -4,16 +4,18 @@ import (
 	echo "github.com/labstack/echo/v4"
 )
 
-var server *echo.Echo
+func New(service Balancer) Server {
+	server := Server{echo.New(), BalanceHandler{service}}
 
-func Start() error {
-	server = echo.New()
+	server.GET("balance/users/:id", server.handler.getBalance)
+	server.GET("balance/users/:id/history", server.handler.getHistory)
+	server.PUT("balance/users/:id", server.handler.changeBalance)
+	server.PUT("balance/users/:id/transfer", server.handler.transfer)
 
-	server.GET("balance/users/:id", getBalanceHandler)
-	server.GET("balance/users/:id/history", getHistoryHandler)
-	server.PUT("balance/users/:id", changeBalanceHandler)
-	server.PUT("balance/users/:id/transfer", transferHandler)
-	server.Logger.Fatal(server.Start(":1323"))
+	return server
+}
 
+func (server *Server) Start() error {
+	server.Logger.Fatal(server.Echo.Start(":1323"))
 	return nil
 }

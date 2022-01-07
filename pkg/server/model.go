@@ -1,17 +1,36 @@
 package server
 
 import (
-	"fmt"
+	"balance/pkg/service"
+	"errors"
+
+	echo "github.com/labstack/echo/v4"
 )
+
+type Balancer interface {
+	GetBalance(id int64, currency string) (*service.Balance, error)
+	GetHistory(id int64) ([]*service.Transfer, error)
+	ChangeBalance(id int64, amount int64) (*service.Balance, error)
+	Transfer(senderId int64, recipientId int64, amount int64) (*service.Balance, error)
+}
+
+type BalanceHandler struct {
+	service Balancer
+}
+
+type Server struct {
+	*echo.Echo
+	handler BalanceHandler
+}
 
 var (
-	errInvalidParameters = fmt.Errorf("invalid request parameters")
+	errInvalidParameters = errors.New("invalid request parameters")
 )
 
-type response struct {
-	Err    *string     `json:"error"`
-	Record interface{} `json:"data"`
+type errorResponse struct {
+	Message string `json:"message"`
 }
+
 type getData struct {
 	Id       int64  `param:"id"`
 	Currency string `query:"currency"`
@@ -24,13 +43,4 @@ type transferData struct {
 	SenderId    int64 `param:"id"`
 	RecipientId int64 `json:"recipient"`
 	Amount      int64 `json:"amount"`
-}
-
-func newResponse(record interface{}, err error) *response {
-	if err == nil {
-		return &response{nil, record}
-	}
-
-	errString := err.Error()
-	return &response{&errString, record}
 }

@@ -1,7 +1,7 @@
-package balance
+package service
 
 import (
-	"balance_microservice/database"
+	"balance/pkg/repository"
 	"fmt"
 	"io"
 	"math"
@@ -10,10 +10,31 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+type Repository interface {
+	Open() error
+	Close() error
+	BeginTransaction() (*repository.Transaction, error)
+
+	UserExists(tx *repository.Transaction, id int64) (bool, error)
+	GetUserBalance(tx *repository.Transaction, id int64, forUpdate bool) (repository.Balance, error)
+	GetUserHistory(tx *repository.Transaction, id int64) ([]repository.Transfer, error)
+	CreateUser(tx *repository.Transaction, id int64) error
+	ChangeUserBalance(tx *repository.Transaction, id int64, amount int64) error
+	UpdateHistory(tx *repository.Transaction, id int64, amount int64, purpose string) error
+}
+
+type BalanceService struct {
+	repo Repository
+}
+
+func New(repository Repository) *BalanceService {
+	return &BalanceService{repo: repository}
+}
+
 //Helper function for accessing database. Since other functions such as update balance need to
 //access database for actual values but do not want to start new transaction, there is this function
-func getBalance(tx *database.Transaction, id int64, currency string, forUpdate bool) (*Balance, error) {
-	secondaryBalance, err := database.GetUserBalance(tx, id, forUpdate)
+func (bs *BalanceService) getBalance(tx *repository.Transaction, id int64, currency string, forUpdate bool) (*Balance, error) {
+	secondaryBalance, err := bs.repo.GetUserBalance(tx, id, forUpdate)
 	if err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, ErrUserNotFound
@@ -38,14 +59,14 @@ func getBalance(tx *database.Transaction, id int64, currency string, forUpdate b
 		exchangeRateValue := gjson.Get(string(jsonBytes), fmt.Sprintf("%s_%s", defaultCurrency, currency))
 		exchangeRate := exchangeRateValue.Float()
 
-		if exchangeRate > 1.0 && int64(float64(math.MaxInt64)/exchangeRate) < secondaryBalance {
+		if exchangeRate > 1.0 && int64(float64(math.MaxInt64)/exchangeRate) < secondaryBalance.Amount {
 			return nil, ErrBalanceOverflow
 		}
 
-		secondaryBalance = int64(float64(secondaryBalance) * exchangeRate)
+		secondaryBalance = repository.Balance{Amount: int64(float64(secondaryBalance.Amount) * exchangeRate)}
 	}
 
-	balance, err := newBalance(secondaryBalance, currency)
+	balance, err := newBalance(secondaryBalance.Amount, currency)
 	if err != nil {
 		return nil, err
 	}
@@ -55,8 +76,8 @@ func getBalance(tx *database.Transaction, id int64, currency string, forUpdate b
 
 //params must be validated:
 //id mist be >= 0
-func GetBalanceTransaction(id int64, currency string) (*Balance, error) {
-	tx, err := database.BeginTransaction()
+func (bs *BalanceService) GetBalance(id int64, currency string) (*Balance, error) {
+	tx, err := bs.repo.BeginTransaction()
 	if err != nil {
 		return nil, ErrAccessDatabase
 	}
@@ -68,14 +89,14 @@ func GetBalanceTransaction(id int64, currency string) (*Balance, error) {
 		}
 	}()
 
-	balance, err := getBalance(tx, id, currency, false)
+	balance, err := bs.getBalance(tx, id, currency, false)
 	return balance, err
 }
 
 //params must be validated:
 //id mist be >= 0
-func GetHistoryTransaction(id int64) ([]*Transfer, error) {
-	tx, err := database.BeginTransaction()
+func (bs *BalanceService) GetHistory(id int64) ([]*Transfer, error) {
+	tx, err := bs.repo.BeginTransaction()
 	if err != nil {
 		return nil, ErrAccessDatabase
 	}
@@ -87,7 +108,7 @@ func GetHistoryTransaction(id int64) ([]*Transfer, error) {
 		}
 	}()
 
-	exists, err := database.UserExists(tx, id)
+	exists, err := bs.repo.UserExists(tx, id)
 	if err != nil {
 		return nil, ErrAccessDatabase
 	}
@@ -96,7 +117,7 @@ func GetHistoryTransaction(id int64) ([]*Transfer, error) {
 	}
 
 	transfers := make([]*Transfer, 0)
-	dbTransfers, err := database.GetUserHistory(tx, id)
+	dbTransfers, err := bs.repo.GetUserHistory(tx, id)
 	if err != nil {
 		return nil, ErrAccessDatabase
 	}
@@ -114,8 +135,8 @@ func GetHistoryTransaction(id int64) ([]*Transfer, error) {
 
 //params must be validated:
 //id must be >= 0
-func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
-	tx, err := database.BeginTransaction()
+func (bs *BalanceService) ChangeBalance(id int64, amount int64) (*Balance, error) {
+	tx, err := bs.repo.BeginTransaction()
 	if err != nil {
 		return nil, ErrAccessDatabase
 	}
@@ -127,7 +148,7 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 		}
 	}()
 
-	balanceStruct, err := getBalance(tx, id, defaultCurrency, true)
+	balanceStruct, err := bs.getBalance(tx, id, defaultCurrency, true)
 
 	if err != nil {
 		if err != ErrUserNotFound {
@@ -140,12 +161,12 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 		}
 
 		//new account is created with first money crediting
-		err = database.CreateUser(tx, id)
+		err = bs.repo.CreateUser(tx, id)
 		if err != nil {
 			return nil, ErrAccessDatabase
 		}
 
-		balanceStruct, err = getBalance(tx, id, defaultCurrency, true)
+		balanceStruct, err = bs.getBalance(tx, id, defaultCurrency, true)
 		if err != nil {
 			return nil, err
 		}
@@ -168,19 +189,19 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 	}
 
 	if amount != 0 {
-		err = database.ChangeUserBalance(tx, id, amount)
+		err = bs.repo.ChangeUserBalance(tx, id, amount)
 		if err != nil {
 			return nil, ErrAccessDatabase
 		}
 
-		err = database.UpdateHistory(tx, id, amount, "External service operation")
+		err = bs.repo.UpdateHistory(tx, id, amount, "External service operation")
 		if err != nil {
 			return nil, ErrAccessDatabase
 		}
 	}
 
 	//get record and return successfully
-	balanceStruct, err = getBalance(tx, id, defaultCurrency, false)
+	balanceStruct, err = bs.getBalance(tx, id, defaultCurrency, false)
 	if err != nil {
 		return nil, err
 	}
@@ -190,8 +211,8 @@ func ChangeBalanceTransaction(id int64, amount int64) (*Balance, error) {
 
 //params must be validated:
 //both ids should be >= 0, ids should not be equal, amount should be positive value
-func TransferTransaction(senderId int64, recipientId int64, amount int64) (*Balance, error) {
-	tx, err := database.BeginTransaction()
+func (bs *BalanceService) Transfer(senderId int64, recipientId int64, amount int64) (*Balance, error) {
+	tx, err := bs.repo.BeginTransaction()
 	if err != nil {
 		return nil, ErrAccessDatabase
 	}
@@ -203,7 +224,7 @@ func TransferTransaction(senderId int64, recipientId int64, amount int64) (*Bala
 		}
 	}()
 
-	senderBalanceStruct, err := getBalance(tx, senderId, defaultCurrency, true)
+	senderBalanceStruct, err := bs.getBalance(tx, senderId, defaultCurrency, true)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +236,7 @@ func TransferTransaction(senderId int64, recipientId int64, amount int64) (*Bala
 		return nil, ErrNotEnoughMoney
 	}
 
-	recipientBalanceStruct, err := getBalance(tx, recipientId, defaultCurrency, true)
+	recipientBalanceStruct, err := bs.getBalance(tx, recipientId, defaultCurrency, true)
 	if err != nil {
 		//new account is not created, user cannot transfer money to
 		//non-existing person
@@ -229,25 +250,25 @@ func TransferTransaction(senderId int64, recipientId int64, amount int64) (*Bala
 		return nil, ErrBalanceOverflow
 	}
 
-	err = database.ChangeUserBalance(tx, senderId, amount*-1)
+	err = bs.repo.ChangeUserBalance(tx, senderId, amount*-1)
 	if err != nil {
 		return nil, err
 	}
-	err = database.UpdateHistory(tx, senderId, amount*-1, fmt.Sprintf("Transferred to %d", recipientId))
+	err = bs.repo.UpdateHistory(tx, senderId, amount*-1, fmt.Sprintf("Transferred to %d", recipientId))
 	if err != nil {
 		return nil, ErrAccessDatabase
 	}
 
-	err = database.ChangeUserBalance(tx, recipientId, amount)
+	err = bs.repo.ChangeUserBalance(tx, recipientId, amount)
 	if err != nil {
 		return nil, err
 	}
-	err = database.UpdateHistory(tx, recipientId, amount, fmt.Sprintf("Transferred from %d", senderId))
+	err = bs.repo.UpdateHistory(tx, recipientId, amount, fmt.Sprintf("Transferred from %d", senderId))
 	if err != nil {
 		return nil, ErrAccessDatabase
 	}
 
-	senderBalanceStruct, err = getBalance(tx, senderId, defaultCurrency, false)
+	senderBalanceStruct, err = bs.getBalance(tx, senderId, defaultCurrency, false)
 	if err != nil {
 		return nil, err
 	}
