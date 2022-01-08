@@ -20,7 +20,7 @@ func main() {
 	service := service.New(postgres)
 
 	server := server.New(service)
-	if err := server.Start(); err != nil {
+	if err := server.Start(1323); err != nil {
 		log.Fatal("failed to start server")
 	}
 }

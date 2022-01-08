@@ -2,14 +2,38 @@ package server
 
 import (
 	"balance/pkg/service"
+	"errors"
 	"net/http"
 
 	echo "github.com/labstack/echo/v4"
 )
 
+var (
+	errInvalidParameters = errors.New("invalid request parameters")
+)
+
+//structures for getting data from requests and sending responses
+type errorResponse struct {
+	Message string `json:"message"`
+}
+
+type getData struct {
+	Id       int64  `param:"id"`
+	Currency string `query:"currency"`
+}
+type changeData struct {
+	Id     int64 `param:"id"`
+	Amount int64 `json:"amount"`
+}
+type transferData struct {
+	SenderId    int64 `param:"id"`
+	RecipientId int64 `json:"recipient"`
+	Amount      int64 `json:"amount"`
+}
+
 //GET balance/users/<user id>?currency=<currency name>
 //returns error and balance struct in JSON
-func (h BalanceHandler) getBalance(ctx echo.Context) error {
+func (s *Server) getBalance(ctx echo.Context) error {
 	request := &getData{}
 	err := ctx.Bind(request)
 	if err != nil || request.Id < 0 {
@@ -20,7 +44,7 @@ func (h BalanceHandler) getBalance(ctx echo.Context) error {
 		request.Currency = "RUB"
 	}
 
-	balanceStruct, err := h.service.GetBalance(request.Id, request.Currency)
+	balanceStruct, err := s.service.GetBalance(request.Id, request.Currency)
 	if err == nil {
 		return ctx.JSON(http.StatusOK, balanceStruct)
 	}
@@ -40,14 +64,14 @@ func (h BalanceHandler) getBalance(ctx echo.Context) error {
 
 //GET balance/users/<user id>/history
 //returns error and user's transfers in JSON
-func (h BalanceHandler) getHistory(ctx echo.Context) error {
+func (s *Server) getHistory(ctx echo.Context) error {
 	request := &getData{}
 	err := ctx.Bind(request)
 	if err != nil || request.Id < 0 {
 		return ctx.JSON(http.StatusBadRequest, errorResponse{errInvalidParameters.Error()})
 	}
 
-	transfers, err := h.service.GetHistory(request.Id)
+	transfers, err := s.service.GetHistory(request.Id)
 
 	if err == nil {
 		return ctx.JSON(http.StatusOK, transfers)
@@ -67,14 +91,14 @@ func (h BalanceHandler) getHistory(ctx echo.Context) error {
 //PUT balance/users/<user id>
 //JSON: amount: <amount of kopecks>
 //returns error and changed balance struct in JSON
-func (h BalanceHandler) changeBalance(ctx echo.Context) error {
+func (s *Server) changeBalance(ctx echo.Context) error {
 	request := &changeData{}
 	err := ctx.Bind(request)
 	if err != nil || request.Id < 0 {
 		return ctx.JSON(http.StatusBadRequest, errorResponse{errInvalidParameters.Error()})
 	}
 
-	balanceStruct, err := h.service.ChangeBalance(request.Id, request.Amount)
+	balanceStruct, err := s.service.ChangeBalance(request.Id, request.Amount)
 
 	if err == nil {
 		return ctx.JSON(http.StatusOK, balanceStruct)
@@ -96,7 +120,7 @@ func (h BalanceHandler) changeBalance(ctx echo.Context) error {
 //PUT balance/users/<user id>/transfer
 //JSON amount: <amount of kopeks> recipient: <recipient's id>
 //returns error and changed balance struct of sender in JSON
-func (h BalanceHandler) transfer(ctx echo.Context) error {
+func (s *Server) transfer(ctx echo.Context) error {
 	request := &transferData{}
 	err := ctx.Bind(request)
 	//check for self-transfer, negative transfer and invalid ids
@@ -104,7 +128,7 @@ func (h BalanceHandler) transfer(ctx echo.Context) error {
 		return ctx.JSON(http.StatusBadRequest, errorResponse{errInvalidParameters.Error()})
 	}
 
-	balanceStruct, err := h.service.Transfer(request.SenderId, request.RecipientId, request.Amount)
+	balanceStruct, err := s.service.Transfer(request.SenderId, request.RecipientId, request.Amount)
 
 	if err == nil {
 		return ctx.JSON(http.StatusOK, balanceStruct)

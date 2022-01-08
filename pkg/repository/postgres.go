@@ -36,5 +36,13 @@ func (postgres *Postgres) BeginTransaction() (*Transaction, error) {
 
 		return nil, err
 	}
-	return tx, nil
+	return &Transaction{tx}, nil
+}
+
+func (Postgres *Postgres) Commit(tx *Transaction) error {
+	return tx.tx.Commit()
+}
+
+func (Postgres *Postgres) Rollback(tx *Transaction) error {
+	return tx.tx.Rollback()
 }
